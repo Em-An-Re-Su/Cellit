@@ -1,212 +1,1144 @@
+
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
-import random
 
-st.set_page_config(page_title="Gene Studio | 3D 유전자 실험실", page_icon="🧬", layout="wide")
-
-st.title("🧬 Gene Studio")
-st.caption("3D DNA 편집과 유전자–형질 관계를 탐구하는 교육용 시뮬레이터")
-st.info(
-    "교육용 단순 모델입니다. 실제 생물의 형질은 여러 유전자와 환경의 영향을 받을 수 있으며, "
-    "아래 색소 형질은 원리를 설명하기 위해 가상으로 설정했습니다."
+st.set_page_config(
+    page_title="BioSphere 3D",
+    page_icon="🧬",
+    layout="wide"
 )
 
-BASES = ["A", "T", "C", "G"]
-BASE_COLORS = {"A": "#E76F51", "T": "#2A9D8F", "C": "#457B9D", "G": "#E9C46A"}
-COMPLEMENT = {"A": "T", "T": "A", "C": "G", "G": "C"}
-DEFAULT_SEQ = "ATGCGTACCTGACTGGAACCTGATCGTACG"
+# --------------------------------------------------
+# 기본 설정
+# --------------------------------------------------
 
-def normalize_sequence(raw):
-    seq = "".join(ch for ch in raw.upper() if ch in BASES)
-    return seq[:60]
+st.markdown("""
+<style>
+.stApp {
+    background: #10141e;
+    color: #edf2f7;
+}
+header {
+    visibility: hidden;
+}
+.block-container {
+    padding-top: 1rem;
+    max-width: 1500px;
+}
+h1, h2, h3 {
+    color: #dce9ff;
+}
+[data-testid="stSidebar"] {
+    background: #171d2b;
+}
+</style>
+""", unsafe_allow_html=True)
 
-def pigment_score(seq):
-    # Deliberately simplified teaching rule:
-    # the number of G/C bases represents a fictional pigment-production score.
-    if not seq:
-        return 0.0
-    gc_ratio = sum(ch in "GC" for ch in seq) / len(seq)
-    return round(100 * gc_ratio, 1)
+st.title("🧬 BioSphere 3D")
+st.caption(
+    "인체에서 세포, DNA, 형질까지 연결하는 "
+    "3D 생명과학 탐구 시뮬레이터"
+)
 
-def phenotype(score):
-    # Map the teaching score to a color gradient from pale yellow to deep purple.
-    t = max(0.0, min(1.0, score / 100.0))
-    start = np.array([245, 222, 150], dtype=float)
-    end = np.array([91, 45, 130], dtype=float)
-    rgb = (start * (1 - t) + end * t).astype(int)
-    return "#{:02x}{:02x}{:02x}".format(*rgb), t
+st.info(
+    "교육용 개념 모델입니다. 실제 인체의 해부학적 구조, "
+    "유전자 발현, 약물의 효과를 의학적으로 예측하는 프로그램은 아닙니다."
+)
 
-def make_dna_figure(seq, selected_index=None):
-    if not seq:
-        seq = "ATGC"
-    n = len(seq)
-    theta = np.linspace(0, 2 * np.pi * max(n / 10, 1), n)
-    z = np.linspace(0, max(n / 3.3, 1), n)
-    radius = 1.0
-    x1, y1 = radius * np.cos(theta), radius * np.sin(theta)
-    x2, y2 = radius * np.cos(theta + np.pi), radius * np.sin(theta + np.pi)
+# --------------------------------------------------
+# 3D 도형 생성 함수
+# --------------------------------------------------
+
+def ellipsoid(
+    center,
+    scale,
+    color,
+    name,
+    opacity=1.0,
+    resolution=24
+):
+    """
+    3D 타원체를 생성한다.
+    center: (x, y, z)
+    scale: (rx, ry, rz)
+    """
+
+    u = np.linspace(
+        0,
+        2 * np.pi,
+        resolution
+    )
+
+    v = np.linspace(
+        0,
+        np.pi,
+        resolution
+    )
+
+    x = (
+        center[0]
+        + scale[0]
+        * np.outer(
+            np.cos(u),
+            np.sin(v)
+        )
+    )
+
+    y = (
+        center[1]
+        + scale[1]
+        * np.outer(
+            np.sin(u),
+            np.sin(v)
+        )
+    )
+
+    z = (
+        center[2]
+        + scale[2]
+        * np.outer(
+            np.ones_like(u),
+            np.cos(v)
+        )
+    )
+
+    return go.Surface(
+        x=x,
+        y=y,
+        z=z,
+        colorscale=[
+            [0, color],
+            [1, color]
+        ],
+        showscale=False,
+        opacity=opacity,
+        name=name,
+        hovertemplate=name + "<extra></extra>"
+    )
+
+
+def line3d(
+    x,
+    y,
+    z,
+    color,
+    width=5,
+    name=""
+):
+    return go.Scatter3d(
+        x=x,
+        y=y,
+        z=z,
+        mode="lines",
+        line=dict(
+            color=color,
+            width=width
+        ),
+        name=name
+    )
+
+
+def make_figure(title):
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter3d(
-        x=x1, y=y1, z=z, mode="lines+markers",
-        line=dict(color="#3A86FF", width=6),
-        marker=dict(size=4, color=[BASE_COLORS[b] for b in seq],
-                    line=dict(color="white", width=0.5)),
-        name="가닥 1", hovertemplate="가닥 1<br>염기: %{text}<extra></extra>",
-        text=list(seq)
-    ))
-    comp = "".join(COMPLEMENT[b] for b in seq)
-    fig.add_trace(go.Scatter3d(
-        x=x2, y=y2, z=z, mode="lines+markers",
-        line=dict(color="#8338EC", width=6),
-        marker=dict(size=4, color=[BASE_COLORS[b] for b in comp],
-                    line=dict(color="white", width=0.5)),
-        name="가닥 2 (상보적)", hovertemplate="상보 가닥<br>염기: %{text}<extra></extra>",
-        text=list(comp)
-    ))
-
-    # Base-pair rungs
-    for i in range(n):
-        highlight = (i == selected_index)
-        fig.add_trace(go.Scatter3d(
-            x=[x1[i], x2[i]], y=[y1[i], y2[i]], z=[z[i], z[i]],
-            mode="lines",
-            line=dict(color="#FF006E" if highlight else "rgba(130,140,150,0.65)",
-                      width=5 if highlight else 2),
-            showlegend=False,
-            hovertemplate=f"위치 {i+1}: {seq[i]}–{comp[i]}<extra></extra>"
-        ))
 
     fig.update_layout(
-        height=520,
-        margin=dict(l=0, r=0, t=10, b=0),
-        scene=dict(
-            xaxis=dict(visible=False), yaxis=dict(visible=False),
-            zaxis=dict(visible=False, title=""),
-            aspectmode="manual", aspectratio=dict(x=1, y=1, z=1.5),
-            camera=dict(eye=dict(x=1.6, y=1.6, z=1.1)),
-            bgcolor="rgba(0,0,0,0)"
+        title=title,
+        height=680,
+        margin=dict(
+            l=0,
+            r=0,
+            t=50,
+            b=0
         ),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+        paper_bgcolor="#10141e",
+        plot_bgcolor="#10141e",
+        font=dict(
+            color="#edf2f7"
+        ),
+        scene=dict(
+            bgcolor="#10141e",
+            aspectmode="data",
+            xaxis=dict(
+                visible=False
+            ),
+            yaxis=dict(
+                visible=False
+            ),
+            zaxis=dict(
+                visible=False
+            ),
+            camera=dict(
+                eye=dict(
+                    x=1.6,
+                    y=1.6,
+                    z=1.2
+                )
+            )
+        ),
+        legend=dict(
+            bgcolor="rgba(20,25,35,0.7)"
+        )
     )
+
     return fig
 
-if "sequence" not in st.session_state:
-    st.session_state.sequence = DEFAULT_SEQ
-if "original_sequence" not in st.session_state:
-    st.session_state.original_sequence = DEFAULT_SEQ
-if "selected_index" not in st.session_state:
-    st.session_state.selected_index = 0
 
-with st.sidebar:
-    st.header("🧪 유전자 편집 도구")
-    st.write("A, T, C, G 네 가지 염기를 사용합니다.")
-    edit_mode = st.radio("편집 방식", ["염기 하나 바꾸기", "전체 서열 직접 입력", "무작위 변이"], index=0)
+# --------------------------------------------------
+# 인체 구조 데이터
+# --------------------------------------------------
 
-    if edit_mode == "염기 하나 바꾸기":
-        pos = st.number_input("편집할 위치 (1부터 시작)", min_value=1, max_value=len(st.session_state.sequence), value=min(st.session_state.selected_index + 1, len(st.session_state.sequence)), step=1)
-        current_base = st.session_state.sequence[pos - 1]
-        st.write(f"현재 위치의 염기: **{current_base}**")
-        new_base = st.selectbox("새 염기", BASES, index=BASES.index(current_base))
-        if st.button("선택한 염기 적용", use_container_width=True):
-            seq = list(st.session_state.sequence)
-            seq[pos - 1] = new_base
-            st.session_state.sequence = "".join(seq)
-            st.session_state.selected_index = pos - 1
-            st.rerun()
+ORGANS = {
 
-    elif edit_mode == "전체 서열 직접 입력":
-        typed = st.text_area("DNA 서열 (A/T/C/G)", value=st.session_state.sequence, height=110)
-        if st.button("서열 적용", use_container_width=True):
-            cleaned = normalize_sequence(typed)
-            if len(cleaned) < 4:
-                st.error("A, T, C, G로 된 염기를 4개 이상 입력해 주세요.")
-            else:
-                st.session_state.sequence = cleaned
-                st.session_state.selected_index = 0
-                st.rerun()
+    "뇌": {
+        "center": (0, 0, 3.3),
+        "scale": (0.48, 0.40, 0.45),
+        "color": "#d78dba",
+        "cells": [
+            "신경세포",
+            "성상세포",
+            "희소돌기아교세포"
+        ],
+        "function": (
+            "감각 정보 처리, 운동 조절, 기억, "
+            "사고 및 신체 기능 조절"
+        ),
+        "loss": (
+            "손상된 뇌 영역에 따라 운동, 감각, "
+            "언어 또는 인지 기능에 문제가 발생할 수 있다."
+        )
+    },
 
-    else:
-        mutation_count = st.slider("변이시킬 염기 수", 1, min(10, len(st.session_state.sequence)), 1)
-        if st.button("무작위 변이 적용", use_container_width=True):
-            seq = list(st.session_state.sequence)
-            indices = random.sample(range(len(seq)), k=mutation_count)
-            for i in indices:
-                choices = [b for b in BASES if b != seq[i]]
-                seq[i] = random.choice(choices)
-            st.session_state.sequence = "".join(seq)
-            st.session_state.selected_index = indices[0]
-            st.rerun()
+    "심장": {
+        "center": (0.28, -0.22, 2.15),
+        "scale": (0.28, 0.23, 0.38),
+        "color": "#e85d75",
+        "cells": [
+            "심근세포",
+            "내피세포",
+            "섬유아세포"
+        ],
+        "function": (
+            "혈액을 순환시켜 산소와 영양소를 "
+            "각 조직으로 운반한다."
+        ),
+        "loss": (
+            "혈액 순환이 중단되면 조직에 산소와 "
+            "영양소를 공급할 수 없게 된다."
+        )
+    },
 
-    st.divider()
-    if st.button("원래 서열로 초기화", use_container_width=True):
-        st.session_state.sequence = st.session_state.original_sequence
-        st.session_state.selected_index = 0
-        st.rerun()
-    if st.button("현재 서열을 원본으로 저장", use_container_width=True):
-        st.session_state.original_sequence = st.session_state.sequence
-        st.success("현재 서열을 원본으로 저장했습니다.")
+    "폐": {
+        "center": (-0.48, 0, 2.0),
+        "scale": (0.38, 0.25, 0.55),
+        "color": "#8bc9dc",
+        "cells": [
+            "폐포 제1형 세포",
+            "폐포 제2형 세포",
+            "섬모상피세포"
+        ],
+        "function": (
+            "산소와 이산화탄소의 교환을 담당한다."
+        ),
+        "loss": (
+            "산소 공급과 이산화탄소 배출이 "
+            "어려워진다."
+        )
+    },
 
-seq = st.session_state.sequence
-original = st.session_state.original_sequence
-score = pigment_score(seq)
-original_score = pigment_score(original)
-color, _ = phenotype(score)
-original_color, _ = phenotype(original_score)
+    "간": {
+        "center": (0.40, -0.10, 1.55),
+        "scale": (0.48, 0.30, 0.22),
+        "color": "#b87a48",
+        "cells": [
+            "간세포",
+            "쿠퍼세포",
+            "담관세포"
+        ],
+        "function": (
+            "물질 대사, 담즙 생성, 혈장 단백질 합성, "
+            "독성 물질의 대사"
+        ),
+        "loss": (
+            "대사 조절, 혈액 응고 단백질 합성, "
+            "담즙 생성 등에 문제가 생길 수 있다."
+        )
+    },
 
-left, right = st.columns([1.55, 1])
-with left:
-    st.subheader("3D DNA 이중 나선")
-    st.plotly_chart(make_dna_figure(seq, st.session_state.selected_index), use_container_width=True)
-    st.caption("마우스로 회전·확대할 수 있습니다. 점 위에 마우스를 올리면 염기 정보가 표시됩니다.")
+    "신장": {
+        "center": (0.50, 0.10, 1.0),
+        "scale": (0.24, 0.20, 0.35),
+        "color": "#a66f8f",
+        "cells": [
+            "족세포",
+            "근위세뇨관 세포",
+            "원위세뇨관 세포"
+        ],
+        "function": (
+            "혈액을 여과하고 수분, 전해질, "
+            "노폐물 배출을 조절한다."
+        ),
+        "loss": (
+            "노폐물 배출과 체액 및 전해질 "
+            "균형 유지에 문제가 생길 수 있다."
+        )
+    },
 
-with right:
-    st.subheader("가상 형질: 색소 생성")
-    st.markdown("이 모델에서는 **G와 C의 비율**을 가상의 색소 생성 지표로 사용합니다. 실제 유전학에서 GC 비율만으로 색을 예측할 수 있는 것은 아닙니다.")
-    st.metric("가상 색소 지수", f"{score:.1f} / 100", delta=f"{score - original_score:+.1f} (원본 대비)")
-    st.markdown(
-        f"""
-        <div style="border:1px solid rgba(128,128,128,.35); border-radius:16px; padding:18px; text-align:center;">
-          <div style="font-size:14px; opacity:.8; margin-bottom:10px;">시뮬레이션된 생물의 색</div>
-          <div style="width:130px;height:130px;border-radius:50%;margin:auto;background:{color};
-          border:5px solid rgba(255,255,255,.7);box-shadow:0 5px 22px rgba(0,0,0,.18);"></div>
-          <div style="font-family:monospace;margin-top:12px;">{color}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
+    "위": {
+        "center": (-0.30, -0.15, 1.35),
+        "scale": (0.32, 0.22, 0.28),
+        "color": "#e5a16b",
+        "cells": [
+            "위벽세포",
+            "주세포",
+            "점액분비세포"
+        ],
+        "function": (
+            "음식물을 저장하고 위산과 소화 효소를 "
+            "통해 소화를 시작한다."
+        ),
+        "loss": (
+            "소화 과정과 음식물의 저장 및 "
+            "이동에 문제가 발생할 수 있다."
+        )
+    }
+}
+
+
+# --------------------------------------------------
+# 3D 인체 모델
+# --------------------------------------------------
+
+def draw_human(removed_organs=None):
+
+    if removed_organs is None:
+        removed_organs = []
+
+    fig = make_figure(
+        "3D Human Anatomy"
     )
-    st.write(f"원본 서열의 가상 지수: **{original_score:.1f}**")
-    st.write(f"현재 서열 길이: **{len(seq)} 염기쌍 위치**")
 
-st.divider()
-st.subheader("유전자 서열 비교")
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("**원본 서열**")
-    st.code(original, language=None)
-with col2:
-    st.markdown("**현재 서열**")
-    st.code(seq, language=None)
+    # 머리
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 3.3),
+            (0.48, 0.40, 0.45),
+            "#d4a17f",
+            "머리"
+        )
+    )
 
-diffs = [i for i, (a, b) in enumerate(zip(original, seq)) if a != b]
-if len(original) != len(seq):
-    st.warning("원본과 현재 서열의 길이가 다릅니다. 아래 위치별 비교는 공통 길이 안에서만 표시합니다.")
-if diffs:
-    st.write("변경된 위치:", ", ".join(str(i + 1) for i in diffs))
-else:
-    st.success("원본과 현재 서열이 같습니다.")
+    # 목
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 2.85),
+            (0.18, 0.18, 0.25),
+            "#c99576",
+            "목"
+        )
+    )
 
-st.subheader("염기쌍과 상보적 결합")
-st.caption("DNA에서 A는 T와, C는 G와 상보적으로 결합합니다.")
-pair_cols = st.columns(min(len(seq), 15))
-for i, base in enumerate(seq[:15]):
-    with pair_cols[i]:
-        st.markdown(
-            f"<div style='text-align:center;border:1px solid #8885;border-radius:8px;padding:8px 2px;'>"
-            f"<b>{i+1}</b><br><span style='color:{BASE_COLORS[base]};font-size:20px;font-weight:700'>{base}</span>"
-            f"<br>│<br><span style='color:{BASE_COLORS[COMPLEMENT[base]]};font-size:20px;font-weight:700'>{COMPLEMENT[base]}</span></div>",
-            unsafe_allow_html=True
+    # 몸통
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 2.05),
+            (0.70, 0.38, 0.90),
+            "#c99576",
+            "몸통",
+            opacity=0.22
+        )
+    )
+
+    # 골반
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 1.05),
+            (0.55, 0.34, 0.35),
+            "#c99576",
+            "골반",
+            opacity=0.35
+        )
+    )
+
+    # 팔
+    for side in [-1, 1]:
+
+        fig.add_trace(
+            ellipsoid(
+                (
+                    side * 0.90,
+                    0,
+                    1.95
+                ),
+                (
+                    0.20,
+                    0.20,
+                    0.70
+                ),
+                "#c99576",
+                "팔",
+                opacity=0.35
+            )
         )
 
-st.caption("참고: 이 앱은 DNA 염기쌍의 상보성과 가상의 형질 지표를 보여주는 교육용 시각화입니다. 실제 단백질 번역, 유전자 조절, 우성·열성, 다유전자 형질은 구현하지 않았습니다.")
+    # 다리
+    for side in [-1, 1]:
+
+        fig.add_trace(
+            ellipsoid(
+                (
+                    side * 0.25,
+                    0,
+                    0.30
+                ),
+                (
+                    0.23,
+                    0.23,
+                    0.85
+                ),
+                "#c99576",
+                "다리",
+                opacity=0.35
+            )
+        )
+
+    # 장기
+    for name, organ in ORGANS.items():
+
+        if name in removed_organs:
+            continue
+
+        fig.add_trace(
+            ellipsoid(
+                organ["center"],
+                organ["scale"],
+                organ["color"],
+                name
+            )
+        )
+
+    fig.update_layout(
+        scene=dict(
+            xaxis=dict(
+                range=[-1.5, 1.5]
+            ),
+            yaxis=dict(
+                range=[-1, 1]
+            ),
+            zaxis=dict(
+                range=[-0.5, 4]
+            )
+        )
+    )
+
+    return fig
+
+
+# --------------------------------------------------
+# 세포 모델
+# --------------------------------------------------
+
+def draw_cell(cell_name):
+
+    fig = make_figure(
+        "3D Cell Model"
+    )
+
+    # 세포막
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 0),
+            (2, 1.5, 1.5),
+            "#70c7d9",
+            "세포막",
+            opacity=0.18
+        )
+    )
+
+    # 세포질
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 0),
+            (1.85, 1.38, 1.38),
+            "#7db8a5",
+            "세포질",
+            opacity=0.12
+        )
+    )
+
+    # 핵
+    fig.add_trace(
+        ellipsoid(
+            (0, 0, 0),
+            (0.65, 0.65, 0.65),
+            "#a68be0",
+            "핵"
+        )
+    )
+
+    # 미토콘드리아
+    for center in [
+        (1.0, 0.4, 0.2),
+        (-1.0, -0.5, 0.4),
+        (0.5, -0.8, -0.4)
+    ]:
+
+        fig.add_trace(
+            ellipsoid(
+                center,
+                (0.35, 0.18, 0.15),
+                "#e9a66b",
+                "미토콘드리아"
+            )
+        )
+
+    # 소포체
+    for i in range(4):
+
+        x = np.linspace(
+            -0.9,
+            0.9,
+            100
+        )
+
+        y = (
+            0.5
+            + 0.15
+            * np.sin(
+                x * 5 + i
+            )
+        )
+
+        z = np.full_like(
+            x,
+            -0.2 + i * 0.12
+        )
+
+        fig.add_trace(
+            line3d(
+                x,
+                y,
+                z,
+                "#7a9fe0",
+                width=5,
+                name="소포체"
+            )
+        )
+
+    # 골지체
+    for i in range(5):
+
+        x = np.linspace(
+            -0.4,
+            0.4,
+            50
+        )
+
+        y = np.full_like(
+            x,
+            -0.8
+        )
+
+        z = (
+            -0.3
+            + i * 0.12
+            + 0.05
+            * np.sin(
+                x * 5
+            )
+        )
+
+        fig.add_trace(
+            line3d(
+                x,
+                y,
+                z,
+                "#e3c36d",
+                width=5,
+                name="골지체"
+            )
+        )
+
+    # 리보솜
+    rng = np.random.default_rng(42)
+
+    for i in range(30):
+
+        px = rng.uniform(
+            -1.3,
+            1.3
+        )
+
+        py = rng.uniform(
+            -0.9,
+            0.9
+        )
+
+        pz = rng.uniform(
+            -0.9,
+            0.9
+        )
+
+        if (
+            px**2 + py**2 + pz**2
+            < 1.4
+        ):
+
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[px],
+                    y=[py],
+                    z=[pz],
+                    mode="markers",
+                    marker=dict(
+                        size=3,
+                        color="#e6e6e6"
+                    ),
+                    name="리보솜"
+                )
+            )
+
+    return fig
+
+
+# --------------------------------------------------
+# DNA 이중나선
+# --------------------------------------------------
+
+def draw_dna(sequence):
+
+    fig = make_figure(
+        "DNA Double Helix"
+    )
+
+    t = np.linspace(
+        0,
+        8 * np.pi,
+        500
+    )
+
+    radius = 0.8
+
+    x1 = radius * np.cos(t)
+    y1 = radius * np.sin(t)
+    z1 = t / 5
+
+    x2 = radius * np.cos(t + np.pi)
+    y2 = radius * np.sin(t + np.pi)
+    z2 = t / 5
+
+    fig.add_trace(
+        line3d(
+            x1,
+            y1,
+            z1,
+            "#5a9be6",
+            width=8,
+            name="DNA 가닥 1"
+        )
+    )
+
+    fig.add_trace(
+        line3d(
+            x2,
+            y2,
+            z2,
+            "#e56b9c",
+            width=8,
+            name="DNA 가닥 2"
+        )
+    )
+
+    # 염기쌍
+    for i in range(
+        0,
+        len(t),
+        12
+    ):
+
+        fig.add_trace(
+            line3d(
+                [
+                    x1[i],
+                    x2[i]
+                ],
+                [
+                    y1[i],
+                    y2[i]
+                ],
+                [
+                    z1[i],
+                    z2[i]
+                ],
+                "#e5d9a0",
+                width=3,
+                name="염기쌍"
+            )
+        )
+
+    fig.update_layout(
+        scene=dict(
+            aspectmode="data"
+        )
+    )
+
+    return fig
+
+
+# --------------------------------------------------
+# DNA 염기서열 교육용 모델
+# --------------------------------------------------
+
+def analyze_sequence(sequence):
+
+    sequence = sequence.upper().replace(
+        " ",
+        ""
+    )
+
+    if not sequence:
+
+        return (
+            "염기서열이 입력되지 않았습니다.",
+            "변화 없음"
+        )
+
+    invalid = [
+        base
+        for base in sequence
+        if base not in "ATGC"
+    ]
+
+    if invalid:
+
+        return (
+            "A, T, G, C만 입력할 수 있습니다.",
+            "변화 없음"
+        )
+
+    if len(sequence) % 3 != 0:
+
+        return (
+            "염기서열 길이가 3의 배수가 아닙니다. "
+            "코돈 단위로 입력해 주세요.",
+            "단백질 변화 모델을 적용할 수 없음"
+        )
+
+    codons = [
+        sequence[i:i + 3]
+        for i in range(
+            0,
+            len(sequence),
+            3
+        )
+    ]
+
+    return (
+        "입력된 염기서열: "
+        + " - ".join(codons),
+        "단백질 합성의 교육용 예시"
+    )
+
+
+# --------------------------------------------------
+# 화면 구성
+# --------------------------------------------------
+
+mode = st.sidebar.radio(
+    "탐구 단계",
+    [
+        "인체",
+        "장기",
+        "세포",
+        "DNA와 형질",
+        "약물 반응"
+    ]
+)
+
+# --------------------------------------------------
+# 인체
+# --------------------------------------------------
+
+if mode == "인체":
+
+    st.header("인체 3D 탐구")
+
+    removed = st.multiselect(
+        "제거할 장기를 선택하세요.",
+        list(ORGANS.keys())
+    )
+
+    fig = draw_human(
+        removed_organs=removed
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    if removed:
+
+        st.subheader(
+            "장기 제거에 따른 기능 변화"
+        )
+
+        for name in removed:
+
+            st.markdown(
+                f"**{name}**: "
+                + ORGANS[name]["loss"]
+            )
+
+    st.caption(
+        "장기 제거에 따른 결과는 "
+        "교육용 개념 설명이며 실제 생리학적 예측이 아닙니다."
+    )
+
+
+# --------------------------------------------------
+# 장기
+# --------------------------------------------------
+
+elif mode == "장기":
+
+    st.header("장기 3D 탐구")
+
+    organ_name = st.selectbox(
+        "탐구할 장기",
+        list(ORGANS.keys())
+    )
+
+    organ = ORGANS[organ_name]
+
+    fig = make_figure(
+        organ_name + " 3D"
+    )
+
+    fig.add_trace(
+        ellipsoid(
+            organ["center"],
+            organ["scale"],
+            organ["color"],
+            organ_name
+        )
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    st.subheader(
+        "장기의 기능"
+    )
+
+    st.write(
+        organ["function"]
+    )
+
+    st.subheader(
+        "구성 세포"
+    )
+
+    for cell in organ["cells"]:
+
+        st.markdown(
+            "- " + cell
+        )
+
+    st.info(
+        "장기별 세포 구성은 대표적인 세포를 "
+        "교육 목적으로 단순화한 목록입니다."
+    )
+
+
+# --------------------------------------------------
+# 세포
+# --------------------------------------------------
+
+elif mode == "세포":
+
+    st.header("세포 3D 탐구")
+
+    cell_name = st.selectbox(
+        "세포 종류",
+        [
+            "심근세포",
+            "신경세포",
+            "간세포",
+            "폐포 제1형 세포",
+            "근위세뇨관 세포"
+        ]
+    )
+
+    st.plotly_chart(
+        draw_cell(cell_name),
+        use_container_width=True
+    )
+
+    st.subheader(
+        "세포 소기관"
+    )
+
+    organelle = st.selectbox(
+        "알아볼 소기관",
+        [
+            "세포막",
+            "핵",
+            "미토콘드리아",
+            "리보솜",
+            "소포체",
+            "골지체"
+        ]
+    )
+
+    descriptions = {
+
+        "세포막":
+            "세포의 경계를 이루며 물질 이동과 신호 전달을 조절한다.",
+
+        "핵":
+            "DNA를 보관하며 유전자 발현 조절에 중요한 역할을 한다.",
+
+        "미토콘드리아":
+            "세포 호흡을 통해 ATP를 생산한다.",
+
+        "리보솜":
+            "mRNA의 정보를 바탕으로 단백질을 합성한다.",
+
+        "소포체":
+            "단백질 및 지질의 합성과 처리에 관여한다.",
+
+        "골지체":
+            "단백질과 지질을 가공하고 분류 및 운반한다."
+    }
+
+    st.write(
+        descriptions[organelle]
+    )
+
+
+# --------------------------------------------------
+# DNA와 형질
+# --------------------------------------------------
+
+elif mode == "DNA와 형질":
+
+    st.header("DNA와 형질 변화")
+
+    st.markdown(
+        """
+        DNA의 염기서열은 유전정보를 저장한다.
+
+        유전자 발현을 통해 만들어진 단백질은
+        세포의 구조와 기능에 영향을 준다.
+
+        세포의 변화가 조직과 기관의 변화로 이어질 수 있다.
+        """
+    )
+
+    sequence = st.text_input(
+        "DNA 염기서열",
+        value="ATG GCT CAA",
+        help="A, T, G, C를 입력하세요."
+    )
+
+    clean_sequence = sequence.replace(
+        " ",
+        ""
+    ).upper()
+
+    st.plotly_chart(
+        draw_dna(clean_sequence),
+        use_container_width=True
+    )
+
+    result, interpretation = analyze_sequence(
+        clean_sequence
+    )
+
+    st.write(result)
+
+    st.subheader(
+        "교육용 형질 시각화"
+    )
+
+    # 교육용 가상 형질
+    # 실제 인간 유전자나 표현형을 예측하지 않음
+    variation = clean_sequence.count("G")
+
+    color_strength = min(
+        1.0,
+        variation / max(
+            len(clean_sequence),
+            1
+        )
+    )
+
+    st.write(
+        "모형의 G 염기 비율:",
+        f"{color_strength * 100:.1f}%"
+    )
+
+    fig = draw_human()
+
+    fig.update_layout(
+        title="DNA 변화에 따른 가상 인체 표현"
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    st.warning(
+        "이 시각화는 실제 인간의 형질을 예측하지 않습니다. "
+        "특정 염기서열과 형질 사이의 관계는 유전자, "
+        "발현 조절, 환경 등 여러 요인에 의해 결정됩니다."
+    )
+
+
+# --------------------------------------------------
+# 약물 반응
+# --------------------------------------------------
+
+elif mode == "약물 반응":
+
+    st.header("약물과 생리 반응")
+
+    st.warning(
+        "이 기능은 약물의 생리학적 작용을 학습하기 위한 "
+        "개념 모델입니다. 실제 약물 투여, 주입, 용량 또는 "
+        "개인의 반응을 예측하지 않습니다."
+    )
+
+    drug = st.selectbox(
+        "탐구할 약물 계열",
+        [
+            "카페인 계열",
+            "진정 작용 약물 계열",
+            "오피오이드 계열",
+            "각성 작용 약물 계열"
+        ]
+    )
+
+    effects = {
+
+        "카페인 계열": {
+            "system": "중추신경계",
+            "effect":
+                "아데노신 수용체 신호를 억제하여 "
+                "각성 상태에 영향을 줄 수 있다.",
+            "visual":
+                "각성 상태와 관련된 개념적 신경 신호 표시"
+        },
+
+        "진정 작용 약물 계열": {
+            "system": "중추신경계",
+            "effect":
+                "일부 약물은 신경계의 억제성 신호를 "
+                "강화하여 졸림이나 반응 저하를 일으킬 수 있다.",
+            "visual":
+                "신경 신호 활동 감소의 개념적 표현"
+        },
+
+        "오피오이드 계열": {
+            "system": "신경계 및 호흡 조절",
+            "effect":
+                "통증 신호 전달에 영향을 주며, "
+                "호흡 억제 등 심각한 부작용이 나타날 수 있다.",
+            "visual":
+                "통증 신호와 호흡 조절의 관계를 나타내는 "
+                "개념적 시각화"
+        },
+
+        "각성 작용 약물 계열": {
+            "system": "중추신경계",
+            "effect":
+                "신경전달물질 신호에 영향을 주어 "
+                "각성이나 심박수 등의 변화가 나타날 수 있다.",
+            "visual":
+                "신경 신호 전달 변화의 개념적 표현"
+        }
+    }
+
+    selected = effects[drug]
+
+    st.subheader(
+        "작용 계통"
+    )
+
+    st.write(
+        selected["system"]
+    )
+
+    st.subheader(
+        "생리학적 설명"
+    )
+
+    st.write(
+        selected["effect"]
+    )
+
+    st.subheader(
+        "3D 인체 반응"
+    )
+
+    fig = draw_human()
+
+    fig.update_layout(
+        title=selected["visual"]
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    st.subheader(
+        "사람이 보는 화면의 개념적 표현"
+    )
+
+    st.markdown(
+        """
+        아래 화면은 실제 약물 사용자의 시야를 재현하는 것이 아니라,
+        신경계의 정보 처리와 감각 변화에 대한 개념을 설명하기 위한
+        추상적 시각화입니다.
+        """
+    )
+
+    if drug == "카페인 계열":
+
+        st.info(
+            "각성 상태와 주의 집중의 관계를 "
+            "학습하는 개념적 화면입니다."
+        )
+
+    elif drug == "진정 작용 약물 계열":
+
+        st.info(
+            "신경계 억제와 반응 시간의 관계를 "
+            "학습하는 개념적 화면입니다."
+        )
+
+    elif drug == "오피오이드 계열":
+
+        st.error(
+            "오피오이드 계열 약물은 호흡 억제 등 "
+            "생명을 위협할 수 있는 부작용을 일으킬 수 있습니다."
+        )
+
+    else:
+
+        st.info(
+            "신경전달물질과 각성 상태의 관계를 "
+            "학습하는 개념적 화면입니다."
+        )
+
+st.divider()
+
+st.caption(
+    "BioSphere 3D | 생명과학 교육용 시각화 프로젝트"
+)
