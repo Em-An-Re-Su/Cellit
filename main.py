@@ -229,14 +229,16 @@ def ellipsoid_mesh(center, radii, color, name="", opacity=1.0,
     z = cz + rz * np.outer(np.ones_like(u), np.cos(v))
 
     return go.Surface(
-        x=x, y=y, z=z,
+        x=x,
+        y=y,
+        z=z,
         colorscale=[[0, color], [1, color]],
         showscale=False,
         opacity=opacity,
         name=name,
-        showslegend=showlegend,
         hovertemplate=f"{name}<extra></extra>"
     )
+
 
 
 def tube_mesh(start, end, radius, color, name="", resolution=18):
