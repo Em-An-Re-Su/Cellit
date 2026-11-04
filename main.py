@@ -1,3 +1,10 @@
+import plotly
+import plotly.graph_objects as go
+import plotly.express as px
+
+print("Plotly version:", plotly.__version__)
+print("Plotly location:", plotly.__file__)
+print("go.Figure:", go.Figure)
 
 import streamlit as st
 import numpy as np
